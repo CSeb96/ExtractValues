@@ -1,70 +1,138 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 
+/*
+ * Assumptions about this program.
+ *  1) There is a web service online that sends the email text and can recieve the information.
+ *  2) GST is 15%.
+ *  3) The extracted values are sent to the client online in string form.
+ *  4) The Xml attributes are always the same
+ * */
 namespace Serko
 {
     class Program
     {
+        // Variables used in this program.
+        #region Variables
+        private static readonly HttpClient client = new HttpClient();
+        // Assumption: urlForPost is the url for the web service. 
+        private static string urlForPost = "Url://urladdress.com/url";
+        private static string FILENAME = "C:\\Users\\Cyril Sebastian\\Desktop\\email.txt";
+        private static StreamReader reader;
+        private static string txtLines = " ";
+        private static string txtXml = " ";
+        private static double totalMoney = 0;
+        private static readonly double gst = 0.15;
+        private static double excludesGST = 0;
+        private static Stack<char> bracketStack = new Stack<char>();
+        #endregion
         static void Main(string[] args)
         {
-            #region Variables
-            string FILENAME = "C:\\Users\\Cyril Sebastian\\Desktop\\email.txt";
-            StreamReader reader = new StreamReader(FILENAME);
-            string lines = " ";
-            string xml = " ";
-            double totalM = 0;
-            double gst = 0.15;
-            double excludesGST = 0;
-            Stack<char> bracketStack = new Stack<char>();
-            #endregion
 
-            while ((lines = reader.ReadLine()) != null)
+            reader = new StreamReader(FILENAME);
+            Program pg = new Program();
+            // Getting the response from the post method.
+            try
             {
-                if (lines.Contains('<'))
+                var response = pg.GetTaxAsync();
+                if (response.IsCompleted)
                 {
-                    bracketStack.Push('<');
-                }else if(lines.Contains('>')){
-                    bracketStack.Pop();
+                    // Success
                 }
+            }
+            catch (Exception error)
+            {
+                // Return error message with error code
+            }
+        }
 
-                if(bracketStack.Count != 0)
+        public async Task<string> GetTaxAsync()
+        {
+
+            // Console.WriteLine(CheckForMissingTags());
+
+
+            while ((txtLines = reader.ReadLine()) != null)
+            {
+
+                if (txtLines.StartsWith("<") && txtLines.EndsWith(">"))
                 {
-                    Console.WriteLine("Not valid text");
+                    txtXml += txtLines + "\n";
+
                 }
                 else
                 {
-                    if (lines.StartsWith("<") && lines.EndsWith(">"))
-                        xml += lines + "\n";
+                    string regexPattern = @"(<.*>)(.*)(<\/.*>)";
+                    Regex regex = new Regex(regexPattern, RegexOptions.Singleline);
+
+                    //txtXml += regex.Matches(txtLines);
+                    MatchCollection collection = regex.Matches(txtLines);
+
+                    var list = collection.Cast<Match>().Select(match => match.Value).ToList();
+
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        txtXml += list.ElementAt(i);
+                    }
                 }
-               
             }
 
+           XmlDocument doc = new XmlDocument();
 
-            if (!xml.Contains("total"))
+            try
             {
-                Console.WriteLine("Doesn't contain total tag");
+                doc.LoadXml("<root>" + txtXml + "</root>");
+            }
+            catch(Exception err)
+            {
+                // Will catch if there is any tags that aren't closed.
+            }
+        
+            // Get the total from the newly formed XML document.
+
+            XmlNode tNode = doc.GetElementsByTagName("total")[0];
+            XmlNode costCentre = doc.GetElementsByTagName("cost_centre")[0];
+            XmlNode paymentMethod = doc.GetElementsByTagName("payment_method")[0];
+            XmlNode vendor = doc.GetElementsByTagName("vendor")[0];
+            XmlNode description = doc.GetElementsByTagName("description")[0];
+            XmlNode date = doc.GetElementsByTagName("date")[0];
+
+            if (tNode == null)
+            {
+                return "Total tag wasn't present";
             }
             else
             {
-                XmlDocument doc = new XmlDocument();
+                totalMoney = Convert.ToDouble(tNode.InnerXml);
+                excludesGST = totalMoney - (totalMoney * gst);
 
-                doc.LoadXml(xml);
-                XmlNodeList nodeList = doc.GetElementsByTagName("expense");
 
-                XmlNode tNode = doc.GetElementsByTagName("total")[0];
+                // Code to post the gst information back to the web service.
 
-                totalM = Convert.ToDouble(tNode.InnerXml);
-                excludesGST = totalM - (totalM * gst);
+                var xmlValues = new Dictionary<string, string>
+                {
+                    {"costCentre", costCentre.InnerXml },
+                    {"gst", "0.15" },
+                    {"totalNoGst", excludesGST.ToString() },
+                    {"paymentMethod", paymentMethod.InnerXml },
+                    {"vendor", vendor.InnerXml },
+                    {"description", description.InnerXml },
+                    {"date", date.InnerXml }
+                };
+
+                var values = new FormUrlEncodedContent(xmlValues);
+                var response = await client.PostAsync(urlForPost, values);
+                var responseString = await response.Content.ReadAsStringAsync();
+
+                return responseString;
             }
-
         }
     }
 }
