@@ -14,6 +14,7 @@ using System.Xml.Linq;
  *  2) GST is 15%.
  *  3) The extracted values are sent to the client online in string form.
  *  4) The Xml attributes are always the same
+ *  5) I added the text from the email to resources in this project so I can call Resources.Email for testing.
  * */
 namespace Serko
 {
@@ -22,11 +23,9 @@ namespace Serko
         // Variables used in this program.
         #region Variables
         private static readonly HttpClient client = new HttpClient();
-        // Assumption: urlForPost is the url for the web service. 
-        private static string urlForPost = "Url://urladdress.com/url";
-        private static string FILENAME = "C:\\Users\\Cyril Sebastian\\Desktop\\email.txt";
-        private static StreamReader reader;
-        private static string txtLines = " ";
+        private static string urlForPost = "URL FOR POST";
+        private static string FILENAME = "LOCAL ADDRESS OF THE FILE";
+        private static string FILE = Properties.Resources.Email;
         private static string txtXml = " ";
         private static double totalMoney = 0;
         private static readonly double gst = 0.15;
@@ -36,12 +35,11 @@ namespace Serko
         static void Main(string[] args)
         {
 
-            reader = new StreamReader(FILENAME);
             Program pg = new Program();
             // Getting the response from the post method.
             try
             {
-                var response = pg.GetTaxAsync();
+                var response = pg.GetTaxAsync(FILE);
                 if (response.IsCompleted)
                 {
                     // Success
@@ -51,20 +49,21 @@ namespace Serko
             {
                 // Return error message with error code
             }
+            finally
+            {
+                client.Dispose();
+            }
         }
 
-        public async Task<string> GetTaxAsync()
+        public async Task<string> GetTaxAsync(string text)
         {
 
-            // Console.WriteLine(CheckForMissingTags());
-
-
-            while ((txtLines = reader.ReadLine()) != null)
+            StringReader reader = new StringReader(text);
+            while ((text = reader.ReadLine()) != null)
             {
-
-                if (txtLines.StartsWith("<") && txtLines.EndsWith(">"))
+                if (text.StartsWith("<") && text.EndsWith(">"))
                 {
-                    txtXml += txtLines + "\n";
+                    txtXml += text + "\n";
 
                 }
                 else
@@ -72,8 +71,7 @@ namespace Serko
                     string regexPattern = @"(<.*>)(.*)(<\/.*>)";
                     Regex regex = new Regex(regexPattern, RegexOptions.Singleline);
 
-                    //txtXml += regex.Matches(txtLines);
-                    MatchCollection collection = regex.Matches(txtLines);
+                    MatchCollection collection = regex.Matches(text);
 
                     var list = collection.Cast<Match>().Select(match => match.Value).ToList();
 
@@ -84,41 +82,51 @@ namespace Serko
                 }
             }
 
-           XmlDocument doc = new XmlDocument();
+            Console.Write(txtXml);
+            XmlDocument doc = new XmlDocument();
 
             try
             {
+                string cost_Centre = " ";
                 doc.LoadXml("<root>" + txtXml + "</root>");
-            }
-            catch(Exception err)
-            {
-                // Will catch if there is any tags that aren't closed.
-            }
-        
-            // Get the total from the newly formed XML document.
 
-            XmlNode tNode = doc.GetElementsByTagName("total")[0];
-            XmlNode costCentre = doc.GetElementsByTagName("cost_centre")[0];
-            XmlNode paymentMethod = doc.GetElementsByTagName("payment_method")[0];
-            XmlNode vendor = doc.GetElementsByTagName("vendor")[0];
-            XmlNode description = doc.GetElementsByTagName("description")[0];
-            XmlNode date = doc.GetElementsByTagName("date")[0];
+                #region Nodes
+                XmlNode tNode = doc.GetElementsByTagName("total")[0];
+                XmlNode costCentre = doc.GetElementsByTagName("cost_centre")[0];
+                XmlNode paymentMethod = doc.GetElementsByTagName("payment_method")[0];
+                XmlNode vendor = doc.GetElementsByTagName("vendor")[0];
+                XmlNode description = doc.GetElementsByTagName("description")[0];
+                XmlNode date = doc.GetElementsByTagName("date")[0];
+                #endregion
 
-            if (tNode == null)
-            {
-                return "Total tag wasn't present";
-            }
-            else
-            {
-                totalMoney = Convert.ToDouble(tNode.InnerXml);
-                excludesGST = totalMoney - (totalMoney * gst);
-
-
-                // Code to post the gst information back to the web service.
-
-                var xmlValues = new Dictionary<string, string>
+                // If cost centre node isn't found, set up a string variable in place of it when sending the data
+                // back to web service. 
+                if (costCentre == null)
                 {
-                    {"costCentre", costCentre.InnerXml },
+                    cost_Centre = "UNKNOWN";
+                }
+                else
+                {
+                    cost_Centre = costCentre.InnerXml;
+                }
+
+                if (tNode == null)
+                {
+                    // Halt the program
+                    return "No total tag present";
+
+                }
+                else
+                {
+                    totalMoney = Convert.ToDouble(tNode.InnerXml);
+                    excludesGST = totalMoney - (totalMoney * gst);
+
+
+                    // Code to post the gst information back to the web service.
+
+                    var xmlValues = new Dictionary<string, string>
+                {
+                    {"costCentre", cost_Centre },
                     {"gst", "0.15" },
                     {"totalNoGst", excludesGST.ToString() },
                     {"paymentMethod", paymentMethod.InnerXml },
@@ -127,12 +135,22 @@ namespace Serko
                     {"date", date.InnerXml }
                 };
 
-                var values = new FormUrlEncodedContent(xmlValues);
-                var response = await client.PostAsync(urlForPost, values);
-                var responseString = await response.Content.ReadAsStringAsync();
+                    var values = new FormUrlEncodedContent(xmlValues);
+                    var response = await client.PostAsync(urlForPost, values);
+                    var responseString = await response.Content.ReadAsStringAsync();
 
-                return responseString;
+                    return responseString;
+                }
+
             }
+            catch (Exception err)
+            {
+                // An error message will display information about any unclosed tags.
+                // Will also catch if any nodes aren't present.
+            }
+
+            return "False";
+
         }
     }
 }
